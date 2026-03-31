@@ -1,0 +1,45 @@
+# Web framework
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+python-multipart==0.0.12
+
+# Database (async + sync drivers)
+sqlalchemy==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+psycopg2-binary==2.9.10
+
+# S3 / MinIO
+boto3==1.35.0
+botocore==1.35.0
+
+# Task queue
+celery==5.4.0
+redis==5.2.0
+flower==2.0.1
+
+# ML / ONNX  (optional – only needed at inference time, not for tests)
+# onnxruntime is not yet wheels-available for Python 3.14;
+# install manually when a compatible wheel ships:
+#   pip install onnxruntime
+numpy>=2.1.0
+Pillow>=11.0.0
+scikit-learn>=1.5.0
+
+# Validation & settings
+pydantic==2.10.0
+pydantic-settings==2.6.0
+
+# Monitoring
+prometheus-client==0.21.0
+
+# Utilities
+python-dotenv==1.0.1
+aiofiles==24.1.0
+httpx==0.28.0
+
+# Testing
+pytest==8.3.0
+pytest-asyncio==0.24.0
+pytest-cov==6.0.0
+moto[s3]==5.0.22

@@ -1,0 +1,181 @@
+services:
+  # ──────────────────────────────────────────────
+  # PostgreSQL
+  # ──────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: nc_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: neuroclassifier
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: neuroclassifier
+    ports:
+      - "15432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U neuroclassifier -d neuroclassifier"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────────
+  # Redis (broker + result backend)
+  # ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: nc_redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "26379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────────
+  # MinIO (S3-compatible object storage)
+  # ──────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: nc_minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    ports:
+      - "29000:9000"   # S3 API
+      - "29001:9001"   # Web console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # MinIO bucket initializer (one-shot)
+  minio_init:
+    image: minio/mc:latest
+    container_name: nc_minio_init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 minioadmin minioadmin &&
+        mc mb --ignore-existing local/datasets &&
+        mc mb --ignore-existing local/models &&
+        mc anonymous set download local/datasets &&
+        echo 'Buckets ready.'
+      "
+
+  # ──────────────────────────────────────────────
+  # API application
+  # ──────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nc_app
+    restart: unless-stopped
+    user: "0:0"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://neuroclassifier:secret@postgres:5432/neuroclassifier
+      DATABASE_URL_SYNC: postgresql+psycopg2://neuroclassifier:secret@postgres:5432/neuroclassifier
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_USE_SSL: "false"
+    ports:
+      - "18015:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - nc_shared_tmp:/tmp/neuroclassifier
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  # ──────────────────────────────────────────────
+  # Celery worker
+  # ──────────────────────────────────────────────
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nc_celery_worker
+    restart: unless-stopped
+    user: "0:0"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://neuroclassifier:secret@postgres:5432/neuroclassifier
+      DATABASE_URL_SYNC: postgresql+psycopg2://neuroclassifier:secret@postgres:5432/neuroclassifier
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_USE_SSL: "false"
+    command: >
+      celery -A app.workers.train_worker.celery_app worker
+      --loglevel=info
+      --concurrency=2
+      --queues=celery
+      --hostname=worker@%h
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - nc_shared_tmp:/tmp/neuroclassifier
+    healthcheck:
+      disable: true
+
+  # ──────────────────────────────────────────────
+  # Celery Flower (task monitoring UI)
+  # ──────────────────────────────────────────────
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nc_flower
+    restart: unless-stopped
+    command: >
+      celery -A app.workers.train_worker.celery_app flower
+      --port=5555
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    ports:
+      - "15555:5555"
+    depends_on:
+      - redis
+    healthcheck:
+      disable: true
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  nc_shared_tmp:

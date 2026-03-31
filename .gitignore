@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.tox/
+.venv/
+venv/
+env/
+
+# Env files
+.env
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Alembic
+# (keep migrations tracked)
+
+# Docker volumes
+postgres_data/
+redis_data/
+minio_data/
+
+# Temporary uploads
+/tmp/
+
+# Local test datasets / archives
+/test_dataset/
+*.zip
+
+# OS
+.DS_Store
+Thumbs.db

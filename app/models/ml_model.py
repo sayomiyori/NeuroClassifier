@@ -1,0 +1,54 @@
+import uuid
+from enum import Enum as PyEnum
+
+from sqlalchemy import Column, String, Float, DateTime, Text, Enum as SAEnum, func
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+
+from app.db.session import Base
+
+
+class ModelStatus(str, PyEnum):
+    TRAINING = "training"
+    READY = "ready"
+    FAILED = "failed"
+    ARCHIVED = "archived"
+
+
+class MLModel(Base):
+    __tablename__ = "ml_models"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(255), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    version = Column(String(64), nullable=False, default="1.0.0")
+
+    status = Column(
+        SAEnum(ModelStatus, name="model_status"),
+        nullable=False,
+        default=ModelStatus.TRAINING,
+        index=True,
+    )
+
+    base_model = Column(String(255), nullable=False)
+    num_classes = Column(String(255), nullable=True)       # stored as int but flexible
+    class_names = Column(JSONB, nullable=True)
+
+    # Metrics
+    accuracy = Column(Float, nullable=True)
+    val_loss = Column(Float, nullable=True)
+    metrics = Column(JSONB, nullable=True)
+
+    # Storage – S3 path to ONNX file
+    s3_bucket = Column(String(255), nullable=True)
+    s3_key = Column(String(512), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return f"<MLModel id={self.id} name={self.name!r} status={self.status}>"
