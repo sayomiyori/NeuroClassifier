@@ -1,0 +1,29 @@
+.git
+.gitignore
+
+# Python virtualenvs
+.venv
+venv
+env
+__pycache__
+*.pyc
+*.pyo
+
+# Tests / coverage
+.pytest_cache
+.coverage
+htmlcov
+coverage.xml
+
+# Local datasets / archives
+test_dataset
+*.zip
+# Keep build files
+
+# IDE
+.idea
+.vscode
+
+# OS
+.DS_Store
+Thumbs.db

@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 from app.api.v1 import datasets, models, predict, training
+from app.api.v1 import train as train_api
 from app.config import get_settings
 from app.db.session import engine, Base
 from app.metrics import HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_TOTAL, metrics_endpoint
@@ -94,7 +95,8 @@ async def prometheus_middleware(request: Request, call_next):
 API_PREFIX = "/api/v1"
 
 app.include_router(datasets.router, prefix=API_PREFIX)
-app.include_router(training.router, prefix=API_PREFIX)
+app.include_router(training.router, prefix=API_PREFIX)  # legacy
+app.include_router(train_api.router, prefix=API_PREFIX)
 app.include_router(models.router, prefix=API_PREFIX)
 app.include_router(predict.router, prefix=API_PREFIX)
 

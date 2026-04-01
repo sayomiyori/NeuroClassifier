@@ -120,7 +120,7 @@ services:
   celery_worker:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.worker
     container_name: nc_celery_worker
     restart: unless-stopped
     user: "0:0"
@@ -134,12 +134,7 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MINIO_USE_SSL: "false"
-    command: >
-      celery -A app.workers.train_worker.celery_app worker
-      --loglevel=info
-      --concurrency=2
-      --queues=celery
-      --hostname=worker@%h
+    # command is defined in Dockerfile.worker
     depends_on:
       postgres:
         condition: service_healthy

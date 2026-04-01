@@ -30,17 +30,20 @@ class MLModel(Base):
     )
 
     base_model = Column(String(255), nullable=False)
-    num_classes = Column(String(255), nullable=True)       # stored as int but flexible
-    class_names = Column(JSONB, nullable=True)
+    class_names = Column(JSONB, nullable=True)  # ["cats","dogs"] or {"cats":0,...} (API uses dict today)
 
     # Metrics
     accuracy = Column(Float, nullable=True)
-    val_loss = Column(Float, nullable=True)
-    metrics = Column(JSONB, nullable=True)
+    training_time_seconds = Column(Float, nullable=True)
 
-    # Storage – S3 path to ONNX file
+    # Lineage
+    dataset_id = Column(UUID(as_uuid=True), nullable=True)
+    training_job_id = Column(UUID(as_uuid=True), nullable=True)
+
+    # Storage – S3 paths
     s3_bucket = Column(String(255), nullable=True)
-    s3_key = Column(String(512), nullable=True)
+    onnx_s3_key = Column(String(512), nullable=True)
+    adapter_s3_key = Column(String(512), nullable=True)  # prefix or a marker object
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(

@@ -1,6 +1,6 @@
 import logging
 import uuid
-from typing import Annotated, List, Optional
+from typing import Annotated, Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -8,64 +8,73 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.metrics import ACTIVE_TRAINING_JOBS
+from app.models.dataset import Dataset, DatasetStatus
 from app.models.training_job import TrainingJob, JobStatus
 from app.workers.train_worker import train_model_task
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/training", tags=["Training (legacy)"])
+router = APIRouter(prefix="/train", tags=["Training"])
 
 
-# ---------------------------------------------------------------------------
-# Schemas
-# ---------------------------------------------------------------------------
+class TrainConfig(BaseModel):
+    base_model: str = Field(default="google/vit-base-patch16-224")
+    lora_rank: int = 8
+    lora_alpha: int = 16
+    lora_dropout: float = 0.1
+    epochs: int = 5
+    batch_size: int = 8
+    learning_rate: float = 1e-4
 
-class TrainingJobCreate(BaseModel):
+
+class TrainRequest(BaseModel):
     dataset_id: uuid.UUID
-    base_model: str = Field(default="mobilenet_v2", examples=["mobilenet_v2", "efficientnet_b0"])
-    hyperparams: Optional[dict] = Field(
-        default=None,
-        examples=[{"lr": 1e-4, "epochs": 10, "batch_size": 32}],
-    )
+    config: Optional[TrainConfig] = None
 
 
-class TrainingJobResponse(BaseModel):
+class TrainCreateResponse(BaseModel):
+    job_id: uuid.UUID
+    status: JobStatus
+
+
+class TrainJobResponse(BaseModel):
     id: uuid.UUID
     dataset_id: Optional[uuid.UUID]
+    ml_model_id: Optional[uuid.UUID]
     status: JobStatus
     base_model: str
-    hyperparams: Optional[dict]
+    config: Optional[dict]
+    progress_pct: Optional[float]
+    epochs_completed: Optional[int]
+    metrics: Optional[list[dict]]
     error_message: Optional[str]
-    celery_task_id: Optional[str]
     created_at: str
     started_at: Optional[str]
-    finished_at: Optional[str]
+    completed_at: Optional[str]
 
     class Config:
         from_attributes = True
 
 
-class TrainingJobList(BaseModel):
-    items: List[TrainingJobResponse]
+class TrainJobList(BaseModel):
+    items: List[TrainJobResponse]
     total: int
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _job_to_response(j: TrainingJob) -> TrainingJobResponse:
-    return TrainingJobResponse(
+def _job_to_response(j: TrainingJob) -> TrainJobResponse:
+    return TrainJobResponse(
         id=j.id,
         dataset_id=j.dataset_id,
+        ml_model_id=j.ml_model_id,
         status=j.status,
         base_model=j.base_model,
-        hyperparams=getattr(j, "hyperparams", None),
+        config=j.config,
+        progress_pct=j.progress_pct,
+        epochs_completed=j.epochs_completed,
+        metrics=j.metrics,
         error_message=j.error_message,
-        celery_task_id=j.celery_task_id,
         created_at=j.created_at.isoformat(),
         started_at=j.started_at.isoformat() if j.started_at else None,
-        finished_at=getattr(j, "finished_at", None).isoformat() if getattr(j, "finished_at", None) else None,
+        completed_at=j.completed_at.isoformat() if j.completed_at else None,
     )
 
 
@@ -77,42 +86,43 @@ async def _get_job(db: AsyncSession, job_id: uuid.UUID) -> TrainingJob:
     return job
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
-
 @router.post(
     "",
-    response_model=TrainingJobResponse,
+    response_model=TrainCreateResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Start a training job",
+    summary="Start training pipeline (LoRA)",
 )
 async def start_training(
-    payload: TrainingJobCreate,
+    payload: TrainRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    ds = await db.get(Dataset, payload.dataset_id)
+    if not ds or ds.status != DatasetStatus.READY:
+        raise HTTPException(status_code=400, detail="Dataset must exist and be READY before training.")
+
+    cfg = (payload.config or TrainConfig()).model_dump()
     job = TrainingJob(
         dataset_id=payload.dataset_id,
         status=JobStatus.QUEUED,
-        base_model=payload.base_model,
-        config={"base_model": payload.base_model, **(payload.hyperparams or {})},
+        base_model=cfg["base_model"],
+        config=cfg,
+        progress_pct=0.0,
+        epochs_completed=0,
+        metrics=[],
     )
     db.add(job)
     await db.flush()
 
-    # Dispatch Celery task
-    train_model_task.apply_async(args=[str(job.id)], task_id=str(uuid.uuid4()))
-    ACTIVE_TRAINING_JOBS.inc()
+    train_model_task.apply_async(
+        args=[str(job.id)],
+        task_id=str(uuid.uuid4()),
+    )
 
-    logger.info("Dispatched training job %s", job.id)
-    return _job_to_response(job)
+    logger.info("Dispatched training job %s for dataset %s", job.id, payload.dataset_id)
+    return TrainCreateResponse(job_id=job.id, status=job.status)
 
 
-@router.get(
-    "",
-    response_model=TrainingJobList,
-    summary="List training jobs",
-)
+@router.get("", response_model=TrainJobList, summary="List training jobs")
 async def list_jobs(
     db: Annotated[AsyncSession, Depends(get_db)],
     skip: int = 0,
@@ -122,14 +132,10 @@ async def list_jobs(
         select(TrainingJob).order_by(TrainingJob.created_at.desc()).offset(skip).limit(limit)
     )
     jobs = list(result.scalars().all())
-    return TrainingJobList(items=[_job_to_response(j) for j in jobs], total=len(jobs))
+    return TrainJobList(items=[_job_to_response(j) for j in jobs], total=len(jobs))
 
 
-@router.get(
-    "/{job_id}",
-    response_model=TrainingJobResponse,
-    summary="Get training job status",
-)
+@router.get("/{job_id}", response_model=TrainJobResponse, summary="Get training job")
 async def get_job(
     job_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -141,7 +147,7 @@ async def get_job(
 @router.delete(
     "/{job_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Cancel / delete a training job",
+    summary="Cancel a training job",
 )
 async def cancel_job(
     job_id: uuid.UUID,
@@ -150,8 +156,8 @@ async def cancel_job(
     job = await _get_job(db, job_id)
     if job.celery_task_id:
         from app.workers.train_worker import celery_app
-        celery_app.control.revoke(job.celery_task_id, terminate=True, signal="SIGTERM")
 
+        celery_app.control.revoke(job.celery_task_id, terminate=True, signal="SIGTERM")
     job.status = JobStatus.CANCELLED
     await db.flush()
-    ACTIVE_TRAINING_JOBS.dec()
+

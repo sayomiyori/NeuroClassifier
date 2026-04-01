@@ -9,8 +9,8 @@ from app.db.session import Base
 
 
 class JobStatus(str, PyEnum):
-    PENDING = "pending"
-    RUNNING = "running"
+    QUEUED = "queued"
+    TRAINING = "training"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -26,30 +26,28 @@ class TrainingJob(Base):
     status = Column(
         SAEnum(JobStatus, name="job_status"),
         nullable=False,
-        default=JobStatus.PENDING,
+        default=JobStatus.QUEUED,
         index=True,
     )
 
     # Celery task ID for tracking
     celery_task_id = Column(String(255), nullable=True, unique=True)
 
-    # Config
-    base_model = Column(String(255), nullable=False, default="mobilenet_v2")
-    hyperparams = Column(JSONB, nullable=True)   # {"lr": 1e-4, "epochs": 10, ...}
+    # Config (full training config)
+    base_model = Column(String(255), nullable=False, default="google/vit-base-patch16-224")
+    config = Column(JSONB, nullable=True)  # {"lora_rank": 8, "epochs": 5, ...}
 
     # Progress
-    current_epoch = Column(Integer, nullable=True)
-    total_epochs = Column(Integer, nullable=True)
-    train_loss = Column(Float, nullable=True)
-    val_accuracy = Column(Float, nullable=True)
-    logs = Column(Text, nullable=True)
+    progress_pct = Column(Float, nullable=True)
+    epochs_completed = Column(Integer, nullable=True)
+    metrics = Column(JSONB, nullable=True)  # [{"epoch": 1, "train_loss": ..., "val_loss": ..., "val_accuracy": ...}]
 
     error_message = Column(Text, nullable=True)
 
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     started_at = Column(DateTime(timezone=True), nullable=True)
-    finished_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
 
     dataset = relationship("Dataset", foreign_keys=[dataset_id], lazy="select")
     ml_model = relationship("MLModel", foreign_keys=[ml_model_id], lazy="select")

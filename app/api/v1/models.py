@@ -1,6 +1,6 @@
 import logging
 import uuid
-from typing import Annotated, List, Optional
+from typing import Annotated, Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models.ml_model import MLModel, ModelStatus
+from app.models.training_job import TrainingJob
 from app.services import s3 as s3_service
 
 logger = logging.getLogger(__name__)
@@ -26,13 +27,11 @@ class MLModelResponse(BaseModel):
     version: str
     status: ModelStatus
     base_model: str
-    num_classes: Optional[str]
     class_names: Optional[dict]
     accuracy: Optional[float]
-    val_loss: Optional[float]
-    metrics: Optional[dict]
     s3_bucket: Optional[str]
-    s3_key: Optional[str]
+    onnx_s3_key: Optional[str]
+    adapter_s3_key: Optional[str]
     download_url: Optional[str]
     created_at: str
 
@@ -45,15 +44,27 @@ class MLModelList(BaseModel):
     total: int
 
 
+class EpochMetric(BaseModel):
+    epoch: int
+    train_loss: Optional[float] = None
+    val_loss: Optional[float] = None
+    val_accuracy: Optional[float] = None
+
+
+class ModelMetricsResponse(BaseModel):
+    model_id: str
+    metrics: Optional[List[EpochMetric]]
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 def _model_to_response(m: MLModel, include_url: bool = False) -> MLModelResponse:
     download_url = None
-    if include_url and m.s3_bucket and m.s3_key and m.status == ModelStatus.READY:
+    if include_url and m.s3_bucket and m.onnx_s3_key and m.status == ModelStatus.READY:
         try:
-            download_url = s3_service.generate_presigned_url(m.s3_bucket, m.s3_key)
+            download_url = s3_service.generate_presigned_url(m.s3_bucket, m.onnx_s3_key)
         except Exception:
             pass
 
@@ -64,13 +75,11 @@ def _model_to_response(m: MLModel, include_url: bool = False) -> MLModelResponse
         version=m.version,
         status=m.status,
         base_model=m.base_model,
-        num_classes=m.num_classes,
         class_names=m.class_names,
         accuracy=m.accuracy,
-        val_loss=m.val_loss,
-        metrics=m.metrics,
         s3_bucket=m.s3_bucket,
-        s3_key=m.s3_key,
+        onnx_s3_key=m.onnx_s3_key,
+        adapter_s3_key=m.adapter_s3_key,
         download_url=download_url,
         created_at=m.created_at.isoformat(),
     )
@@ -120,6 +129,33 @@ async def get_model(
     return _model_to_response(m, include_url=True)
 
 
+@router.get(
+    "/{model_id}/metrics",
+    response_model=ModelMetricsResponse,
+    summary="Get model learning-curve metrics (if available)",
+)
+async def get_model_metrics(
+    model_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    m = await _get_model(db, model_id)
+
+    # Per-epoch metrics live on the associated TrainingJob.
+    job_result = await db.execute(
+        select(TrainingJob)
+        .where(TrainingJob.ml_model_id == model_id)
+        .order_by(TrainingJob.created_at.desc())
+        .limit(1)
+    )
+    job: Optional[TrainingJob] = job_result.scalar_one_or_none()
+
+    metrics: Optional[List[EpochMetric]] = None
+    if job and job.metrics:
+        metrics = [EpochMetric(**entry) for entry in job.metrics]
+
+    return ModelMetricsResponse(model_id=str(m.id), metrics=metrics)
+
+
 @router.delete(
     "/{model_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -130,10 +166,15 @@ async def delete_model(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     m = await _get_model(db, model_id)
-    if m.s3_bucket and m.s3_key:
+    if m.s3_bucket:
         try:
-            client = s3_service.get_s3_client()
-            client.delete_object(Bucket=m.s3_bucket, Key=m.s3_key)
+            # Delete ONNX file
+            if m.onnx_s3_key:
+                client = s3_service.get_s3_client()
+                client.delete_object(Bucket=m.s3_bucket, Key=m.onnx_s3_key)
+            # Delete adapter prefix (folder-like)
+            if m.adapter_s3_key:
+                s3_service.delete_prefix(m.s3_bucket, m.adapter_s3_key)
         except Exception as exc:
-            logger.warning("Could not delete S3 artifact for model %s: %s", model_id, exc)
+            logger.warning("Could not delete S3 artifacts for model %s: %s", model_id, exc)
     await db.delete(m)
