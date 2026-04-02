@@ -391,7 +391,6 @@ def batch_predict_task(self, job_id: str, model_id: str, bucket: str, zip_key: s
     write results.json back to MinIO under batch_jobs/{job_id}/.
     """
     import io
-    import json
     import zipfile
 
     from app.services import s3 as s3_service

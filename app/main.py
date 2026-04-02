@@ -17,7 +17,7 @@ from app.metrics import (
     MODELS_TRAINED_TOTAL,
     metrics_endpoint,
 )
-from app.models.dataset import Dataset, DatasetStatus
+from app.models.dataset import Dataset
 from app.models.ml_model import MLModel, ModelStatus
 from sqlalchemy import select, func
 

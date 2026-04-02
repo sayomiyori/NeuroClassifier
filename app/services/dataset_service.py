@@ -1,6 +1,4 @@
-import io
 import logging
-import os
 import random
 import shutil
 import tempfile
@@ -14,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.config import get_settings
-from app.models.dataset import Dataset, DatasetStatus
+from app.models.dataset import Dataset
 from app.services import s3 as s3_service
 
 settings = get_settings()
