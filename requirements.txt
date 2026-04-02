@@ -18,10 +18,8 @@ celery==5.4.0
 redis==5.2.0
 flower==2.0.1
 
-# ML / ONNX  (optional – only needed at inference time, not for tests)
-# onnxruntime is not yet wheels-available for Python 3.14;
-# install manually when a compatible wheel ships:
-#   pip install onnxruntime
+# ML / ONNX
+onnxruntime==1.19.2
 numpy>=2.1.0
 Pillow>=11.0.0
 scikit-learn>=1.5.0

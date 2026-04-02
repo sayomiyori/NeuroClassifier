@@ -10,7 +10,16 @@ from app.api.v1 import datasets, models, predict, training
 from app.api.v1 import train as train_api
 from app.config import get_settings
 from app.db.session import engine, Base
-from app.metrics import HTTP_REQUEST_DURATION_SECONDS, HTTP_REQUESTS_TOTAL, metrics_endpoint
+from app.metrics import (
+    HTTP_REQUEST_DURATION_SECONDS,
+    HTTP_REQUESTS_TOTAL,
+    DATASETS_TOTAL,
+    MODELS_TRAINED_TOTAL,
+    metrics_endpoint,
+)
+from app.models.dataset import Dataset, DatasetStatus
+from app.models.ml_model import MLModel, ModelStatus
+from sqlalchemy import select, func
 
 settings = get_settings()
 
@@ -27,11 +36,24 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Create tables on startup (Alembic handles migrations in prod)."""
+    """Create tables on startup and seed Prometheus gauges from DB."""
     logger.info("Starting NeuroClassifier …")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables ensured.")
+
+    # Seed gauges from DB so they reflect current state after restart
+    from app.db.session import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        ds_count = (await db.execute(select(func.count()).select_from(Dataset))).scalar_one()
+        m_count = (await db.execute(
+            select(func.count()).select_from(MLModel).where(MLModel.status == ModelStatus.READY)
+        )).scalar_one()
+        DATASETS_TOTAL.set(ds_count)
+        if m_count:
+            MODELS_TRAINED_TOTAL.inc(m_count)
+    logger.info("Metrics seeded: datasets=%d, models=%d", ds_count, m_count)
+
     yield
     logger.info("Shutting down NeuroClassifier.")
     await engine.dispose()

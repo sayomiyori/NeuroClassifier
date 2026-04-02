@@ -1,0 +1,142 @@
+{
+  "title": "NeuroClassifier",
+  "uid": "neuroclassifier",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Training — Jobs Over Time",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "expr": "increase(models_trained_total[5m])",
+          "legendFormat": "completed jobs"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Training — Avg Duration (seconds)",
+      "type": "stat",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "expr": "rate(train_duration_seconds_sum[1h]) / rate(train_duration_seconds_count[1h])",
+          "legendFormat": "avg duration"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3,
+      "title": "Training — Active Jobs",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "expr": "active_training_jobs",
+          "legendFormat": "active"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4,
+      "title": "Inference — Latency p50 / p95 / p99",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(inference_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(inference_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(inference_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Inference — RPS",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 8, "w": 6, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(inference_requests_total[1m])) by (model_id)",
+          "legendFormat": "{{model_id}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Inference — Predictions by Class",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(predictions_total[5m])) by (class_name)",
+          "legendFormat": "{{class_name}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "System — Total Datasets",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 16, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "expr": "datasets_total",
+          "legendFormat": "datasets"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 8,
+      "title": "System — Models Trained Total",
+      "type": "stat",
+      "gridPos": { "x": 16, "y": 16, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "expr": "models_trained_total",
+          "legendFormat": "models"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 9,
+      "title": "HTTP — Request Rate by Endpoint",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 24, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total[1m])) by (endpoint, method)",
+          "legendFormat": "{{method}} {{endpoint}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "HTTP — p95 Latency by Endpoint",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 24, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, endpoint))",
+          "legendFormat": "{{endpoint}}"
+        }
+      ]
+    }
+  ]
+}

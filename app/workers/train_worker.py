@@ -15,6 +15,7 @@ from app.models.dataset import Dataset, DatasetStatus
 from app.models.training_job import TrainingJob, JobStatus
 from app.models.ml_model import MLModel, ModelStatus
 from app.services.dataset_service import process_dataset_zip
+from app.metrics import TRAIN_DURATION_SECONDS, MODELS_TRAINED_TOTAL, ACTIVE_TRAINING_JOBS, DATASETS_TOTAL
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -80,6 +81,7 @@ def process_dataset_task(self, dataset_id: str, zip_path: str, dataset_name: str
         dataset.s3_bucket = metadata["s3_bucket"]
         dataset.s3_prefix = metadata["s3_prefix"]
         db.commit()
+        DATASETS_TOTAL.inc()
         logger.info("Dataset %s is READY", dataset_id)
 
         # Cleanup ZIP only after success
@@ -298,7 +300,7 @@ def train_model_task(self, job_id: str):
         # Upload adapter directory
         bucket = settings.models_bucket
         s3_service.ensure_bucket(bucket)
-        adapter_prefix = f"models/{model_id}/adapter/"
+        adapter_prefix = f"{model_id}/adapter/"
         client = s3_service.get_s3_client()
         for root, _, files in os.walk(adapter_dir):
             for fn in files:
@@ -322,9 +324,14 @@ def train_model_task(self, job_id: str):
             output_names=["logits"],
             dynamic_axes={"pixel_values": {0: "batch"}, "logits": {0: "batch"}},
         )
-        onnx_key = f"models/{model_id}/model.onnx"
+        onnx_key = f"{model_id}/model.onnx"
         with open(onnx_path, "rb") as f:
             client.upload_fileobj(f, bucket, onnx_key, ExtraArgs={"ContentType": "application/onnx"})
+        # Upload external data file if torch created one (large models)
+        onnx_data_path = onnx_path + ".data"
+        if os.path.exists(onnx_data_path):
+            with open(onnx_data_path, "rb") as f:
+                client.upload_fileobj(f, bucket, onnx_key + ".data")
 
         # Save MLModel
         m = MLModel(
@@ -350,6 +357,10 @@ def train_model_task(self, job_id: str):
         job.status = JobStatus.COMPLETED
         job.completed_at = datetime.utcnow()
         db.commit()
+
+        MODELS_TRAINED_TOTAL.inc()
+        TRAIN_DURATION_SECONDS.observe(float(time.time() - t0))
+        ACTIVE_TRAINING_JOBS.dec()
         logger.info("Training job %s completed; model=%s", job_id, m.id)
 
     except Exception as exc:
@@ -363,6 +374,87 @@ def train_model_task(self, job_id: str):
                 db.commit()
         except Exception:
             pass
+        ACTIVE_TRAINING_JOBS.dec()
         raise
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Batch inference task
+# ---------------------------------------------------------------------------
+
+@celery_app.task(bind=True, name="batch_predict", max_retries=1)
+def batch_predict_task(self, job_id: str, model_id: str, bucket: str, zip_key: str):
+    """
+    Download a ZIP of images from MinIO, run ONNX inference on each file,
+    write results.json back to MinIO under batch_jobs/{job_id}/.
+    """
+    import io
+    import json
+    import zipfile
+
+    from app.services import s3 as s3_service
+    from app.services.inference import predict as run_predict
+    from app.models.ml_model import MLModel, ModelStatus
+
+    db = get_sync_db()
+    try:
+        model = db.get(MLModel, uuid.UUID(model_id))
+        if not model or model.status != ModelStatus.READY:
+            raise ValueError(f"Model {model_id} not found or not READY.")
+
+        class_names: list
+        if isinstance(model.class_names, dict):
+            class_names = [k for k, _ in sorted(model.class_names.items(), key=lambda x: x[1])]
+        else:
+            class_names = list(model.class_names or [])
+
+        # Download ZIP
+        client = s3_service.get_s3_client()
+        zip_buf = io.BytesIO()
+        client.download_fileobj(bucket, zip_key, zip_buf)
+        zip_buf.seek(0)
+
+        results = []
+        image_types = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+
+        with zipfile.ZipFile(zip_buf) as zf:
+            for name in zf.namelist():
+                ext = os.path.splitext(name.lower())[1]
+                if ext not in image_types:
+                    continue
+                with zf.open(name) as img_file:
+                    image_bytes = img_file.read()
+                try:
+                    predictions, latency_ms = run_predict(
+                        model_id=model_id,
+                        image_bytes=image_bytes,
+                        s3_bucket=model.s3_bucket,
+                        s3_key=model.onnx_s3_key,
+                        class_names=class_names,
+                    )
+                    results.append({
+                        "filename": name,
+                        "predictions": predictions,
+                        "latency_ms": round(latency_ms, 2),
+                    })
+                except Exception as exc:
+                    results.append({"filename": name, "error": str(exc)})
+
+        # Upload results JSON
+        results_key = f"batch_jobs/{job_id}/results.json"
+        payload = json.dumps({"job_id": job_id, "model_id": model_id, "results": results}).encode()
+        s3_service.upload_bytes(payload, bucket, results_key, content_type="application/json")
+        logger.info("Batch predict job %s done: %d images", job_id, len(results))
+
+    except Exception as exc:
+        logger.exception("Batch predict job %s failed", job_id)
+        error_key = f"batch_jobs/{job_id}/error.txt"
+        try:
+            s3_service.upload_bytes(str(exc).encode(), bucket, error_key, content_type="text/plain")
+        except Exception:
+            pass
+        raise self.retry(exc=exc)
     finally:
         db.close()

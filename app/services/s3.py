@@ -90,10 +90,20 @@ def list_objects(bucket: str, prefix: str) -> list[dict]:
 
 
 def generate_presigned_url(bucket: str, key: str, expires_in: int = 3600) -> str:
-    """Generate a pre-signed URL for downloading an object."""
+    """Generate a pre-signed URL for downloading an object.
+
+    If MINIO_EXTERNAL_ENDPOINT is set, rewrites the host in the URL so it is
+    accessible from outside the Docker network.
+    """
     client = get_s3_client()
-    return client.generate_presigned_url(
+    url = client.generate_presigned_url(
         "get_object",
         Params={"Bucket": bucket, "Key": key},
         ExpiresIn=expires_in,
     )
+    external = settings.minio_external_endpoint
+    if external:
+        internal = settings.minio_endpoint
+        scheme = "https" if settings.minio_use_ssl else "http"
+        url = url.replace(f"{scheme}://{internal}", f"{scheme}://{external}", 1)
+    return url

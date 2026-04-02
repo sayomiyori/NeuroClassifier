@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     minio_access_key: str = Field(default="minioadmin", env="MINIO_ACCESS_KEY")
     minio_secret_key: str = Field(default="minioadmin", env="MINIO_SECRET_KEY")
     minio_use_ssl: bool = Field(default=False, env="MINIO_USE_SSL")
+    # External endpoint for presigned URLs (accessible from outside Docker)
+    minio_external_endpoint: str = Field(default="", env="MINIO_EXTERNAL_ENDPOINT")
     datasets_bucket: str = Field(default="datasets", env="DATASETS_BUCKET")
     models_bucket: str = Field(default="models", env="MODELS_BUCKET")
 
