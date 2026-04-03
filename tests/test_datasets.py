@@ -86,8 +86,7 @@ def create_tables():
     """Create all tables once per test session using the sync engine."""
     Base.metadata.create_all(bind=engine_test)
     yield
-    Base.metadata.drop_all(bind=engine_test)
-    # Clean up temp DB file
+    # Skip drop_all — async engine may still hold a lock; just delete the file.
     try:
         os.remove(_TEST_DB_PATH)
     except OSError:
@@ -380,5 +379,5 @@ class TestMinIOIntegration:
         assert metadata["num_classes"] == 2
         assert metadata["total_images"] == 24
         assert metadata["train_count"] == 18   # floor(12 * 0.8) * 2 classes = 9 * 2
-        assert metadata["val_count"] == 4
+        assert metadata["val_count"] == 6   # (12 - floor(12*0.8)) * 2 = 3 * 2
         assert set(metadata["class_names"].keys()) == {"cats", "dogs"}
