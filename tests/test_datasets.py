@@ -21,7 +21,7 @@ import boto3
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
-from moto import mock_s3
+from moto import mock_aws
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool
@@ -127,7 +127,7 @@ class FakeCeleryResult:
 class TestDatasetUpload:
     """POST /api/v1/datasets"""
 
-    @mock_s3
+    @mock_aws
     @patch("app.api.v1.datasets.process_dataset_task")
     def test_upload_valid_zip_returns_202(self, mock_task, client: TestClient):
         mock_task.apply_async.return_value = FakeCeleryResult()
@@ -311,7 +311,7 @@ class TestDatasetProcessingLogic:
 class TestMinIOIntegration:
     """Tests that use moto's mock S3 to verify actual upload behaviour."""
 
-    @mock_s3
+    @mock_aws
     def test_process_dataset_zip_uploads_to_minio(self, tmp_path):
         """Full pipeline: zip → extract → validate → split → upload."""
         # Set up mock S3
