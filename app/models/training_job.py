@@ -1,8 +1,8 @@
 import uuid
 from enum import Enum as PyEnum
 
-from sqlalchemy import Column, String, Integer, Float, DateTime, Text, ForeignKey, Enum as SAEnum, func
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import Column, String, Integer, Float, DateTime, Text, ForeignKey, Enum as SAEnum, func, JSON
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from app.db.session import Base
@@ -35,12 +35,12 @@ class TrainingJob(Base):
 
     # Config (full training config)
     base_model = Column(String(255), nullable=False, default="google/vit-base-patch16-224")
-    config = Column(JSONB, nullable=True)  # {"lora_rank": 8, "epochs": 5, ...}
+    config = Column(JSON, nullable=True)   # {"lora_rank": 8, "epochs": 5, ...}
 
     # Progress
     progress_pct = Column(Float, nullable=True)
     epochs_completed = Column(Integer, nullable=True)
-    metrics = Column(JSONB, nullable=True)  # [{"epoch": 1, "train_loss": ..., "val_loss": ..., "val_accuracy": ...}]
+    metrics = Column(JSON, nullable=True)   # [{"epoch": 1, "train_loss": ..., "val_loss": ..., "val_accuracy": ...}]
 
     error_message = Column(Text, nullable=True)
 

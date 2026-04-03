@@ -1,8 +1,8 @@
 import uuid
 from enum import Enum as PyEnum
 
-from sqlalchemy import Column, String, Float, DateTime, Text, Enum as SAEnum, func
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import Column, String, Float, DateTime, Text, Enum as SAEnum, func, JSON
+from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.session import Base
 
@@ -30,7 +30,7 @@ class MLModel(Base):
     )
 
     base_model = Column(String(255), nullable=False)
-    class_names = Column(JSONB, nullable=True)  # ["cats","dogs"] or {"cats":0,...} (API uses dict today)
+    class_names = Column(JSON, nullable=True)   # ["cats","dogs"] or {"cats":0,...} (API uses dict today)
 
     # Metrics
     accuracy = Column(Float, nullable=True)

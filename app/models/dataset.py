@@ -2,9 +2,9 @@ import uuid
 from enum import Enum as PyEnum
 
 from sqlalchemy import (
-    Column, String, Integer, DateTime, Text, Enum as SAEnum, func
+    Column, String, Integer, DateTime, Text, Enum as SAEnum, func, JSON
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.session import Base
 
@@ -32,7 +32,7 @@ class Dataset(Base):
     # Image statistics
     total_images = Column(Integer, nullable=True)
     num_classes = Column(Integer, nullable=True)
-    class_names = Column(JSONB, nullable=True)          # {"cats": 150, "dogs": 140}
+    class_names = Column(JSON, nullable=True)            # {"cats": 150, "dogs": 140}
     train_count = Column(Integer, nullable=True)
     val_count = Column(Integer, nullable=True)
 
