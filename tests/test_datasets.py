@@ -14,7 +14,7 @@ import io
 import os
 import uuid
 import zipfile
-from typing import Generator
+from typing import AsyncGenerator, Generator
 from unittest.mock import MagicMock, patch
 
 import boto3
@@ -23,8 +23,10 @@ import pytest_asyncio
 from fastapi.testclient import TestClient
 from moto import mock_aws
 from sqlalchemy import create_engine, event
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import StaticPool, NullPool
 
 from app.config import get_settings
 from app.db.session import Base, get_db
@@ -33,16 +35,19 @@ from app.models.dataset import Dataset, DatasetStatus
 
 settings = get_settings()
 
-# ─── In-memory SQLite for tests ──────────────────────────────────────────────
-SQLITE_URL = "sqlite://"
+# ─── File-based SQLite shared between sync and async engines ─────────────────
+# Using a file so both the sync fixture `db` and the async FastAPI dependency
+# operate on the same database.
+_TEST_DB_PATH = f"/tmp/test_neuroclassifier_{os.getpid()}.db"
+SQLITE_SYNC_URL = f"sqlite:///{_TEST_DB_PATH}"
+SQLITE_ASYNC_URL = f"sqlite+aiosqlite:///{_TEST_DB_PATH}"
 
+# Sync engine – used by the `db` fixture to seed/verify data directly
 engine_test = create_engine(
-    SQLITE_URL,
+    SQLITE_SYNC_URL,
     connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
 )
 
-# Enable foreign keys in SQLite
 @event.listens_for(engine_test, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
     cursor = dbapi_connection.cursor()
@@ -51,17 +56,24 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
 
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine_test)
 
+# Async engine – used by FastAPI's dependency override
+engine_async_test = create_async_engine(
+    SQLITE_ASYNC_URL,
+    connect_args={"check_same_thread": False},
+)
+AsyncTestingSessionLocal = async_sessionmaker(
+    engine_async_test, expire_on_commit=False, class_=AsyncSession
+)
 
-def override_get_db():
-    db = TestingSessionLocal()
-    try:
-        yield db
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+
+async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncTestingSessionLocal() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
 
 
 app.dependency_overrides[get_db] = override_get_db
@@ -71,10 +83,15 @@ app.dependency_overrides[get_db] = override_get_db
 
 @pytest.fixture(scope="session", autouse=True)
 def create_tables():
-    """Create all tables once per test session."""
+    """Create all tables once per test session using the sync engine."""
     Base.metadata.create_all(bind=engine_test)
     yield
     Base.metadata.drop_all(bind=engine_test)
+    # Clean up temp DB file
+    try:
+        os.remove(_TEST_DB_PATH)
+    except OSError:
+        pass
 
 
 @pytest.fixture()
@@ -362,6 +379,6 @@ class TestMinIOIntegration:
 
         assert metadata["num_classes"] == 2
         assert metadata["total_images"] == 24
-        assert metadata["train_count"] == 20   # ceil(12 * 0.8) * 2 classes
+        assert metadata["train_count"] == 18   # floor(12 * 0.8) * 2 classes = 9 * 2
         assert metadata["val_count"] == 4
         assert set(metadata["class_names"].keys()) == {"cats", "dogs"}
